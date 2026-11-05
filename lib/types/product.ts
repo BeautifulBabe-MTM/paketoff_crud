@@ -49,8 +49,10 @@ export interface Product {
 
 export type ProductFormData = Omit<
   Product,
-  "_id" | "createdAt" | "updatedAt"
->;
+  "_id" | "createdAt" | "updatedAt" | "images"
+> & {
+  images: string[];
+};
 
 export interface ProductCategory {
   category: string;
