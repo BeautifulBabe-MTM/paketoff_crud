@@ -6,7 +6,7 @@ const printOptionSchema = new Schema(
     code: {
       type: String,
       required: true,
-      match: /^\d+x\d+$/,
+      match: /^\d+[x+]\d+$/,
     },
     quantity: {
       type: Number,
