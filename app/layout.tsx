@@ -14,10 +14,10 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "Paketoff Admin",
-    template: "%s | Paketoff Admin",
+    default: "Пакеты - Backoffice",
+    template: "%s | Пакеты - Backoffice",
   },
-  description: "Панель управления Paketoff",
+  description: "Панель управления",
 };
 
 export default function RootLayout({
