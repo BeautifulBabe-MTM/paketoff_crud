@@ -7,13 +7,21 @@ import {
   isSafeFilename,
   isExcelFile,
 } from "@/lib/patterns";
+import { getCurrentAdmin } from "@/lib/auth";
 
-// Удаление шаблона
 export async function DELETE(
   request: NextRequest,
   context: { params: Promise<{ filename: string }> }
 ) {
   try {
+    const admin = await getCurrentAdmin();
+
+    if (!admin) {
+      return NextResponse.json(
+        { error: "Необходима авторизация" },
+        { status: 401 }
+      );
+    }
     const { filename } = await context.params;
 
     // Проверяем имя и расширение файла

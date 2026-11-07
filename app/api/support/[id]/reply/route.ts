@@ -4,6 +4,7 @@ import mongoose from "mongoose";
 import nodemailer from "nodemailer";
 import { connectDB } from "@/lib/db";
 import Ticket from "@/lib/models/Ticket";
+import { getCurrentAdmin } from "@/lib/auth";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -38,6 +39,14 @@ export async function POST(
   { params }: RouteContext
 ) {
   try {
+    const admin = await getCurrentAdmin();
+
+    if (!admin) {
+      return NextResponse.json(
+        { error: "Необходима авторизация" },
+        { status: 401 }
+      );
+    }
     const { id } = await params;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {

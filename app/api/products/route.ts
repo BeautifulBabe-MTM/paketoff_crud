@@ -1,7 +1,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import mongoose from "mongoose";
-
+import { getCurrentAdmin } from "@/lib/auth";
 import { connectDB } from "@/lib/db";
 import Product from "@/lib/models/Product";
 
@@ -65,6 +65,14 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const admin = await getCurrentAdmin();
+
+    if (!admin) {
+      return NextResponse.json(
+        { error: "Необходима авторизация" },
+        { status: 401 }
+      );
+    }
     const body = await request.json();
 
     await connectDB();

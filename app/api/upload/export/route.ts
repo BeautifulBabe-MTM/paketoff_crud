@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { connectDB } from "@/lib/db";
 import Product from "@/lib/models/Product";
+import { getCurrentAdmin } from "@/lib/auth";
 
 function getSafeSheetName(name: string, usedNames: Set<string>): string {
     const baseName = (name || "Без категории")
@@ -23,6 +24,14 @@ function getSafeSheetName(name: string, usedNames: Set<string>): string {
 
 export async function GET() {
     try {
+        const admin = await getCurrentAdmin();
+
+        if (!admin) {
+            return NextResponse.json(
+                { error: "Необходима авторизация" },
+                { status: 401 }
+            );
+        }
         await connectDB();
 
         const products = await Product.find().lean();

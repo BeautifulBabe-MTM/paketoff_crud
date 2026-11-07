@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { connectDB } from "@/lib/db";
 import Product from "@/lib/models/Product";
+import { getCurrentAdmin } from "@/lib/auth";
 
 function getString(value: unknown): string {
     if (value === null || value === undefined) return "";
@@ -62,6 +63,15 @@ function getPrices(row: Record<string, unknown>) {
 
 export async function POST(request: NextRequest) {
     try {
+        const admin = await getCurrentAdmin();
+
+        if (!admin) {
+            return NextResponse.json(
+                { error: "Необходима авторизация" },
+                { status: 401 }
+            );
+        }
+
         const formData = await request.formData();
         const file = formData.get("file");
 

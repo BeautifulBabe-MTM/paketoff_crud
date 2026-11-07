@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs/promises";
 import * as XLSX from "xlsx";
-
+import { getCurrentAdmin } from "@/lib/auth";
 import { connectDB } from "@/lib/db";
 import Product from "@/lib/models/Product";
 import {
@@ -61,6 +61,15 @@ function getNormalizedCategoryExpression() {
 
 export async function POST(request: NextRequest) {
     try {
+        const admin = await getCurrentAdmin();
+
+        if (!admin) {
+            return NextResponse.json(
+                { error: "Необходима авторизация" },
+                { status: 401 }
+            );
+        }
+
         const body = await request.json();
 
         const category =

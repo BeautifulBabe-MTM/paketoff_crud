@@ -1,7 +1,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import mongoose from "mongoose";
-
+import { getCurrentAdmin } from "@/lib/auth";
 import { connectDB } from "@/lib/db";
 import Product from "@/lib/models/Product";
 
@@ -14,6 +14,14 @@ export async function PUT(
   { params }: RouteContext
 ) {
   try {
+    const admin = await getCurrentAdmin();
+
+    if (!admin) {
+      return NextResponse.json(
+        { error: "Необходима авторизация" },
+        { status: 401 }
+      );
+    }
     const { id } = await params;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -71,6 +79,14 @@ export async function DELETE(
   { params }: RouteContext
 ) {
   try {
+    const admin = await getCurrentAdmin();
+
+    if (!admin) {
+      return NextResponse.json(
+        { error: "Необходима авторизация" },
+        { status: 401 }
+      );
+    }
     const { id } = await params;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {

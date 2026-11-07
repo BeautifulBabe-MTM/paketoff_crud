@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 import fs from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
-
+import { getCurrentAdmin } from "@/lib/auth";
 import { connectDB } from "@/lib/db";
 import Order from "@/lib/models/Order";
 
@@ -52,9 +52,18 @@ function getStoredFilePath(filePath?: string) {
 // GET — открыть или скачать макет
 export async function GET(
     _request: NextRequest,
-    { params }: RouteContext
+    { params }: RouteContext,
+    
 ) {
     try {
+        const admin = await getCurrentAdmin();
+
+        if (!admin) {
+            return NextResponse.json(
+                { error: "Необходима авторизация" },
+                { status: 401 }
+            );
+        }
         const { id } = await params;
 
         if (!isValidId(id)) {
@@ -100,6 +109,7 @@ export async function GET(
                 "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(filename)}`,
                 "Content-Length": String(file.length),
                 "Cache-Control": "private, no-store",
+                "X-Content-Type-Options": "nosniff",
             },
         });
     } catch (error) {
@@ -131,6 +141,14 @@ export async function POST(
     let newFilePath: string | null = null;
 
     try {
+        const admin = await getCurrentAdmin();
+
+        if (!admin) {
+            return NextResponse.json(
+                { error: "Необходима авторизация" },
+                { status: 401 }
+            );
+        }
         const { id } = await params;
 
         if (!isValidId(id)) {
@@ -185,7 +203,7 @@ export async function POST(
 
         order.layout = {
             filename,
-            originalName: file.name,
+            originalName,
             mimeType: file.type || "application/octet-stream",
             size: file.size,
             pathOnDisk: newFilePath,
@@ -210,7 +228,7 @@ export async function POST(
     } catch (error) {
         // Если сохранение в MongoDB не удалось, убираем новый файл.
         if (newFilePath) {
-            await fs.unlink(newFilePath).catch(() => {});
+            await fs.unlink(newFilePath).catch(() => { });
         }
 
         console.error("POST order layout error:", error);
@@ -228,6 +246,14 @@ export async function DELETE(
     { params }: RouteContext
 ) {
     try {
+        const admin = await getCurrentAdmin();
+
+        if (!admin) {
+            return NextResponse.json(
+                { error: "Необходима авторизация" },
+                { status: 401 }
+            );
+        }
         const { id } = await params;
 
         if (!isValidId(id)) {

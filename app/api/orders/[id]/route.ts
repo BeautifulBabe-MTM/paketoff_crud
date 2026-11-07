@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import mongoose from "mongoose";
 import fs from "fs/promises";
 import path from "path";
-
+import { getCurrentAdmin } from "@/lib/auth";
 import { connectDB } from "@/lib/db";
 import Order from "@/lib/models/Order";
 
@@ -15,6 +15,14 @@ export async function DELETE(
     { params }: RouteParams
 ) {
     try {
+        const admin = await getCurrentAdmin();
+
+        if (!admin) {
+            return NextResponse.json(
+                { error: "Необходима авторизация" },
+                { status: 401 }
+            );
+        }
         const { id } = await params;
 
         if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -39,7 +47,7 @@ export async function DELETE(
         if (order.layout?.filename) {
             const uploadDirectory = path.resolve(
                 process.cwd(),
-                "uploads/order-layouts"
+                "storage/order-layouts"
             );
 
             const filePath = path.resolve(
@@ -76,6 +84,14 @@ export async function GET(
     { params }: RouteParams
 ) {
     try {
+        const admin = await getCurrentAdmin();
+
+        if (!admin) {
+            return NextResponse.json(
+                { error: "Необходима авторизация" },
+                { status: 401 }
+            );
+        }
         const { id } = await params;
 
         if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -113,6 +129,14 @@ export async function PUT(
     { params }: RouteParams
 ) {
     try {
+        const admin = await getCurrentAdmin();
+
+        if (!admin) {
+            return NextResponse.json(
+                { error: "Необходима авторизация" },
+                { status: 401 }
+            );
+        }
         const { id } = await params;
 
         if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -123,6 +147,17 @@ export async function PUT(
         }
 
         const body = await request.json();
+
+        if (
+            !body ||
+            typeof body !== "object" ||
+            Array.isArray(body)
+        ) {
+            return NextResponse.json(
+                { error: "Некорректные данные запроса" },
+                { status: 400 }
+            );
+        }
 
         await connectDB();
 

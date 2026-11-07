@@ -3,9 +3,18 @@ import { NextRequest, NextResponse } from "next/server";
 import mongoose from "mongoose";
 import { connectDB } from "@/lib/db";
 import Ticket from "@/lib/models/Ticket";
+import { getCurrentAdmin } from "@/lib/auth";
 
 export async function POST(request: NextRequest) {
   try {
+    const admin = await getCurrentAdmin();
+
+    if (!admin) {
+      return NextResponse.json(
+        { error: "Необходима авторизация" },
+        { status: 401 }
+      );
+    }
     const body = await request.json();
 
     const targetTicketNumber = Number(body.targetTicketNumber);

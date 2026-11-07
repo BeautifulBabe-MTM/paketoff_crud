@@ -1,6 +1,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs/promises";
+import { getCurrentAdmin } from "@/lib/auth";
 import {
   ensurePatternsDir,
   getPatternPath,
@@ -10,6 +11,14 @@ import {
 
 export async function POST(request: NextRequest) {
   try {
+    const admin = await getCurrentAdmin();
+
+    if (!admin) {
+      return NextResponse.json(
+        { error: "Необходима авторизация" },
+        { status: 401 }
+      );
+    }
     const formData = await request.formData();
     const file = formData.get("file");
 

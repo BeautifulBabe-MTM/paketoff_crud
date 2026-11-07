@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import mongoose from "mongoose";
 import { connectDB } from "@/lib/db";
 import User from "@/lib/models/User";
+import { getCurrentAdmin } from "@/lib/auth";
 
 type Context = {
   params: Promise<{ id: string }>;
@@ -18,6 +19,14 @@ export async function GET(
   { params }: Context
 ) {
   try {
+    const admin = await getCurrentAdmin();
+
+    if (!admin) {
+      return NextResponse.json(
+        { error: "Необходима авторизация" },
+        { status: 401 }
+      );
+    }
     const { id } = await params;
 
     if (!isValidId(id)) {
@@ -57,6 +66,14 @@ export async function PATCH(
   { params }: Context
 ) {
   try {
+    const admin = await getCurrentAdmin();
+
+    if (!admin) {
+      return NextResponse.json(
+        { error: "Необходима авторизация" },
+        { status: 401 }
+      );
+    }
     const { id } = await params;
 
     if (!isValidId(id)) {

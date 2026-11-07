@@ -6,6 +6,7 @@ import {
   getPatternPath,
   isExcelFile,
 } from "@/lib/patterns";
+import { getCurrentAdmin } from "@/lib/auth";
 
 interface RouteContext {
   params: Promise<{
@@ -18,6 +19,14 @@ export async function GET(
   context: RouteContext
 ) {
   try {
+    const admin = await getCurrentAdmin();
+
+    if (!admin) {
+      return NextResponse.json(
+        { error: "Необходима авторизация" },
+        { status: 401 }
+      );
+    }
     const { filename } = await context.params;
 
     if (!isExcelFile(filename)) {

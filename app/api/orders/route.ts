@@ -1,9 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/db";
 import Order from "@/lib/models/Order";
+import { getCurrentAdmin } from "@/lib/auth";
 
 export async function GET(request: NextRequest) {
     try {
+        const admin = await getCurrentAdmin();
+
+        if (!admin) {
+            return NextResponse.json(
+                { error: "Необходима авторизация" },
+                { status: 401 }
+            );
+        }
+
         await connectDB();
 
         const { searchParams } = new URL(request.url);
