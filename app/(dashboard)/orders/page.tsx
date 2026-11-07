@@ -3,19 +3,23 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Order, OrderStatus, OrdersResponse } from "@/lib/types/order";
+import type {
+    Order,
+    OrderStatus,
+    OrdersResponse,
+} from "@/lib/types/order";
 
 const STATUS_OPTIONS: {
     value: OrderStatus | "all";
     label: string;
 }[] = [
-    { value: "all", label: "Все статусы" },
-    { value: "new", label: "Новые" },
-    { value: "processing", label: "В обработке" },
-    { value: "shipped", label: "Отправленные" },
-    { value: "completed", label: "Завершённые" },
-    { value: "cancelled", label: "Отменённые" },
-];
+        { value: "all", label: "Все статусы" },
+        { value: "new", label: "Новые" },
+        { value: "processing", label: "В обработке" },
+        { value: "shipped", label: "Отправленные" },
+        { value: "completed", label: "Завершённые" },
+        { value: "cancelled", label: "Отменённые" },
+    ];
 
 const STATUS_STYLES: Record<OrderStatus, string> = {
     new: "bg-yellow-100 text-yellow-800",
@@ -246,10 +250,9 @@ export default function OrdersPage() {
                                             </h3>
 
                                             <span
-                                                className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                                                    STATUS_STYLES[order.status] ??
+                                                className={`rounded-full px-3 py-1 text-xs font-semibold ${STATUS_STYLES[order.status] ??
                                                     "bg-gray-100 text-gray-700"
-                                                }`}
+                                                    }`}
                                             >
                                                 {STATUS_LABELS[order.status] ??
                                                     order.status}

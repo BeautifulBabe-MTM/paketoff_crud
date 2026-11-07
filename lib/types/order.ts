@@ -53,3 +53,11 @@ export interface Order {
     createdAt?: string;
     updatedAt?: string;
 }
+
+export interface OrdersResponse {
+    orders: Order[];
+    total: number;
+    page: number;
+    limit: number;
+    hasMore: boolean;
+}

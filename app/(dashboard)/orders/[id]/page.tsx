@@ -147,7 +147,7 @@ export default function OrderViewPage() {
                             </span>
 
                             <span className="text-sm text-gray-400">
-                                {formatDate(order.createdAt)}
+                                {order.createdAt ? formatDate(order.createdAt) : "—"}
                             </span>
                         </div>
                     </div>
@@ -338,7 +338,7 @@ export default function OrderViewPage() {
                         <div>
                             <p className="text-gray-400">Дата создания</p>
                             <p className="mt-1 font-medium text-gray-900">
-                                {formatDate(order.createdAt)}
+                                {order.createdAt ? formatDate(order.createdAt) : "—"}
                             </p>
                         </div>
                     </div>
