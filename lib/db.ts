@@ -1,12 +1,6 @@
 
 import mongoose from "mongoose";
 
-const MONGO_URI: string = process.env.MONGO_URI ?? "";
-
-if (!MONGO_URI) {
-  throw new Error("Не задана переменная MONGO_URI");
-}
-
 interface MongooseCache {
   conn: typeof mongoose | null;
   promise: Promise<typeof mongoose> | null;
@@ -26,6 +20,15 @@ const cached: MongooseCache =
 global.mongooseCache = cached;
 
 export async function connectDB() {
+  // Получаем переменную непосредственно при подключении
+  const MONGO_URI = process.env.MONGO_URI;
+
+  if (!MONGO_URI) {
+    throw new Error(
+      "Не задана переменная окружения MONGO_URI"
+    );
+  }
+
   if (cached.conn) {
     return cached.conn;
   }
