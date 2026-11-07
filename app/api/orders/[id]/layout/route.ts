@@ -1,11 +1,16 @@
+
 import { NextRequest, NextResponse } from "next/server";
 import mongoose from "mongoose";
 import fs from "fs/promises";
 import path from "path";
-import { randomUUID } from "crypto";
+
 import { getCurrentAdmin } from "@/lib/auth";
 import { connectDB } from "@/lib/db";
 import Order from "@/lib/models/Order";
+import {
+    createDownloadUrl,
+    deleteR2Object,
+} from "@/lib/r2";
 
 const STORAGE_DIR = path.join(
     process.cwd(),
@@ -13,23 +18,12 @@ const STORAGE_DIR = path.join(
     "order-layouts"
 );
 
-const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
-
 type RouteContext = {
     params: Promise<{ id: string }>;
 };
 
 function isValidId(id: string) {
     return mongoose.Types.ObjectId.isValid(id);
-}
-
-function getSafeFilename(name: string) {
-    const basename = name
-        .replace(/\\/g, "/")
-        .split("/")
-        .pop() ?? "file";
-
-    return basename.replace(/[<>:"/\\|?*\x00-\x1F]/g, "_");
 }
 
 function getStoredFilePath(filePath?: string) {
@@ -49,11 +43,10 @@ function getStoredFilePath(filePath?: string) {
     return resolvedPath;
 }
 
-// GET — открыть или скачать макет
+// GET — открыть макет
 export async function GET(
     _request: NextRequest,
-    { params }: RouteContext,
-    
+    { params }: RouteContext
 ) {
     try {
         const admin = await getCurrentAdmin();
@@ -64,6 +57,7 @@ export async function GET(
                 { status: 401 }
             );
         }
+
         const { id } = await params;
 
         if (!isValidId(id)) {
@@ -77,41 +71,63 @@ export async function GET(
 
         const order = await Order.findById(id).lean();
 
-        if (!order) {
-            return NextResponse.json(
-                { error: "Заказ не найден" },
-                { status: 404 }
-            );
-        }
-
-        if (!order.layout?.pathOnDisk) {
+        if (!order?.layout) {
             return NextResponse.json(
                 { error: "У заказа нет прикреплённого макета" },
                 { status: 404 }
             );
         }
 
-        const filePath = getStoredFilePath(order.layout.pathOnDisk);
-
-        if (!filePath) {
-            return NextResponse.json(
-                { error: "Некорректный путь к файлу" },
-                { status: 400 }
+        // Новые макеты хранятся в Cloudflare R2.
+        if (
+            order.layout.storageProvider === "r2" &&
+            order.layout.storageKey
+        ) {
+            const downloadUrl = await createDownloadUrl(
+                order.layout.storageKey
             );
+
+            return NextResponse.redirect(downloadUrl);
         }
 
-        const file = await fs.readFile(filePath);
-        const filename = order.layout.originalName || order.layout.filename || "layout";
+        // Совместимость со старыми локальными макетами.
+        if (order.layout.pathOnDisk) {
+            const filePath = getStoredFilePath(
+                order.layout.pathOnDisk
+            );
 
-        return new NextResponse(new Uint8Array(file), {
-            headers: {
-                "Content-Type": order.layout.mimeType || "application/octet-stream",
-                "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(filename)}`,
-                "Content-Length": String(file.length),
-                "Cache-Control": "private, no-store",
-                "X-Content-Type-Options": "nosniff",
-            },
-        });
+            if (!filePath) {
+                return NextResponse.json(
+                    { error: "Некорректный путь к файлу" },
+                    { status: 400 }
+                );
+            }
+
+            const file = await fs.readFile(filePath);
+
+            const filename =
+                order.layout.originalName ||
+                order.layout.filename ||
+                "layout";
+
+            return new NextResponse(new Uint8Array(file), {
+                headers: {
+                    "Content-Type":
+                        order.layout.mimeType ||
+                        "application/octet-stream",
+                    "Content-Disposition":
+                        `inline; filename*=UTF-8''${encodeURIComponent(filename)}`,
+                    "Content-Length": String(file.length),
+                    "Cache-Control": "private, no-store",
+                    "X-Content-Type-Options": "nosniff",
+                },
+            });
+        }
+
+        return NextResponse.json(
+            { error: "Файл макета не найден" },
+            { status: 404 }
+        );
     } catch (error) {
         if (
             error instanceof Error &&
@@ -133,111 +149,15 @@ export async function GET(
     }
 }
 
-// POST — загрузить новый макет или заменить существующий
-export async function POST(
-    request: NextRequest,
-    { params }: RouteContext
-) {
-    let newFilePath: string | null = null;
-
-    try {
-        const admin = await getCurrentAdmin();
-
-        if (!admin) {
-            return NextResponse.json(
-                { error: "Необходима авторизация" },
-                { status: 401 }
-            );
-        }
-        const { id } = await params;
-
-        if (!isValidId(id)) {
-            return NextResponse.json(
-                { error: "Некорректный ID заказа" },
-                { status: 400 }
-            );
-        }
-
-        await connectDB();
-
-        const order = await Order.findById(id);
-
-        if (!order) {
-            return NextResponse.json(
-                { error: "Заказ не найден" },
-                { status: 404 }
-            );
-        }
-
-        const formData = await request.formData();
-        const file = formData.get("file");
-
-        if (!(file instanceof File) || file.size === 0) {
-            return NextResponse.json(
-                { error: "Выбери файл для загрузки" },
-                { status: 400 }
-            );
-        }
-
-        if (file.size > MAX_FILE_SIZE) {
-            return NextResponse.json(
-                { error: "Размер файла не должен превышать 100 МБ" },
-                { status: 400 }
-            );
-        }
-
-        await fs.mkdir(STORAGE_DIR, { recursive: true });
-
-        const originalName = getSafeFilename(file.name);
-        const filename = `${Date.now()}-${randomUUID()}-${originalName}`;
-
-        newFilePath = path.join(STORAGE_DIR, filename);
-
-        const buffer = Buffer.from(await file.arrayBuffer());
-
-        await fs.writeFile(newFilePath, buffer);
-
-        const oldFilePath = getStoredFilePath(
-            order.layout?.pathOnDisk
-        );
-
-        order.layout = {
-            filename,
-            originalName,
-            mimeType: file.type || "application/octet-stream",
-            size: file.size,
-            pathOnDisk: newFilePath,
-            path: `/api/orders/${id}/layout`,
-        };
-
-        await order.save();
-
-        // Старый файл удаляем только после успешного сохранения нового.
-        if (oldFilePath && oldFilePath !== newFilePath) {
-            await fs.unlink(oldFilePath).catch((error) => {
-                if (error.code !== "ENOENT") {
-                    console.error("Не удалось удалить старый макет:", error);
-                }
-            });
-        }
-
-        return NextResponse.json({
-            message: "Макет успешно загружен",
-            layout: order.layout,
-        });
-    } catch (error) {
-        // Если сохранение в MongoDB не удалось, убираем новый файл.
-        if (newFilePath) {
-            await fs.unlink(newFilePath).catch(() => { });
-        }
-
-        console.error("POST order layout error:", error);
-
-        return NextResponse.json(
-            { error: "Не удалось загрузить макет" },
-            { status: 500 }
-        );
-    }
+// POST — старая загрузка отключена.
+// Новая загрузка выполняется через upload-url и complete.
+export async function POST() {
+    return NextResponse.json(
+        {
+            error: "Используй новый механизм загрузки макета через Cloudflare R2",
+        },
+        { status: 410 }
+    );
 }
 
 // DELETE — удалить прикреплённый макет
@@ -254,6 +174,7 @@ export async function DELETE(
                 { status: 401 }
             );
         }
+
         const { id } = await params;
 
         if (!isValidId(id)) {
@@ -274,17 +195,36 @@ export async function DELETE(
             );
         }
 
+        const storageKey = order.layout?.storageKey;
+
         const oldFilePath = getStoredFilePath(
             order.layout?.pathOnDisk
         );
 
+        // Сначала очищаем запись в MongoDB.
         order.set("layout", undefined);
         await order.save();
 
+        // Затем удаляем объект из R2.
+        if (storageKey) {
+            try {
+                await deleteR2Object(storageKey);
+            } catch (error) {
+                console.error(
+                    "Не удалось удалить макет из R2:",
+                    error
+                );
+            }
+        }
+
+        // Удаляем старый локальный файл, если он существует.
         if (oldFilePath) {
             await fs.unlink(oldFilePath).catch((error) => {
                 if (error.code !== "ENOENT") {
-                    console.error("Не удалось удалить макет:", error);
+                    console.error(
+                        "Не удалось удалить старый макет:",
+                        error
+                    );
                 }
             });
         }

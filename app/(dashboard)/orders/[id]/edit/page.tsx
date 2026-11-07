@@ -22,9 +22,18 @@ import {
 
 import type {
     Order,
-    OrderStatus,
     OrderCartItem,
 } from "@/lib/types/order";
+
+// Статусы заказа
+type OrderStatus =
+    | "new"
+    | "processing"
+    | "shipped"
+    | "completed"
+    | "cancelled";
+
+const MAX_FILE_SIZE = 100 * 1024 * 1024;
 
 const STATUS_LABELS: Record<OrderStatus, string> = {
     new: "Новый",
@@ -76,6 +85,7 @@ export default function EditOrderPage() {
     const [uploadingLayout, setUploadingLayout] = useState(false);
     const [deletingLayout, setDeletingLayout] = useState(false);
 
+    // Загрузка заказа
     useEffect(() => {
         async function loadOrder() {
             try {
@@ -107,18 +117,24 @@ export default function EditOrderPage() {
             }
         }
 
-        if (params.id) loadOrder();
+        if (params.id) {
+            loadOrder();
+        }
     }, [params.id]);
 
+    // Обновление полей заказа
     function updateOrder<K extends keyof Order>(
         field: K,
         value: Order[K]
     ) {
         setOrder((current) =>
-            current ? { ...current, [field]: value } : current
+            current
+                ? { ...current, [field]: value }
+                : current
         );
     }
 
+    // Обновление товара в корзине
     function updateCartItem(
         index: number,
         field: keyof OrderCartItem,
@@ -133,9 +149,13 @@ export default function EditOrderPage() {
             [field]: value,
         };
 
-        setOrder({ ...order, cart: updatedCart });
+        setOrder({
+            ...order,
+            cart: updatedCart,
+        });
     }
 
+    // Добавление товара
     function addCartItem() {
         if (!order) return;
 
@@ -143,11 +163,16 @@ export default function EditOrderPage() {
             ...order,
             cart: [
                 ...(order.cart ?? []),
-                { name: "", quantity: 1, price: 0 },
+                {
+                    name: "",
+                    quantity: 1,
+                    price: 0,
+                },
             ],
         });
     }
 
+    // Удаление товара
     function removeCartItem(index: number) {
         if (!order) return;
 
@@ -157,6 +182,7 @@ export default function EditOrderPage() {
         });
     }
 
+    // Подсчёт общей суммы
     const total =
         order?.cart?.reduce(
             (sum, item) =>
@@ -166,6 +192,7 @@ export default function EditOrderPage() {
             0
         ) ?? 0;
 
+    // Сохранение заказа
     async function saveOrder() {
         if (!order || saving) return;
 
@@ -217,39 +244,125 @@ export default function EditOrderPage() {
         }
     }
 
+    // Загрузка макета в Cloudflare R2
     async function uploadLayout() {
-        if (!selectedFile || uploadingLayout) return;
+        if (!selectedFile || uploadingLayout || deletingLayout) {
+            return;
+        }
+
+        if (selectedFile.size <= 0 || selectedFile.size > MAX_FILE_SIZE) {
+            setError("Размер файла должен быть от 1 байта до 100 МБ");
+            return;
+        }
 
         setUploadingLayout(true);
         setError("");
         setSuccess("");
 
         try {
-            const formData = new FormData();
-            formData.append("file", selectedFile);
+            const contentType =
+                selectedFile.type || "application/octet-stream";
 
-            const response = await fetch(
-                `/api/orders/${params.id}/layout`,
+            // ЭТАП 1. Получаем временную ссылку от Next.js.
+            const urlResponse = await fetch(
+                `/api/orders/${params.id}/layout/upload-url`,
                 {
                     method: "POST",
-                    body: formData,
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                        filename: selectedFile.name,
+                        contentType,
+                        size: selectedFile.size,
+                    }),
                 }
             );
 
-            const data = await response.json();
+            const urlData = await urlResponse.json();
 
-            if (!response.ok) {
-                throw new Error(data.error || "Не удалось загрузить макет");
+            if (!urlResponse.ok) {
+                throw new Error(
+                    urlData.error ||
+                    "Не удалось подготовить загрузку"
+                );
             }
 
+            if (!urlData.uploadUrl || !urlData.storageKey) {
+                throw new Error(
+                    "Сервер не вернул ссылку для загрузки"
+                );
+            }
+
+            // ЭТАП 2. Загружаем файл непосредственно в Cloudflare R2.
+            const uploadResponse = await fetch(
+                urlData.uploadUrl,
+                {
+                    method: "PUT",
+                    headers: {
+                        "Content-Type": contentType,
+                    },
+                    body: selectedFile,
+                }
+            );
+
+            if (!uploadResponse.ok) {
+                throw new Error(
+                    `Cloudflare R2 отклонил загрузку. HTTP ${uploadResponse.status}`
+                );
+            }
+
+            // ЭТАП 3. Подтверждаем загрузку и сохраняем данные в MongoDB.
+            const completeResponse = await fetch(
+                `/api/orders/${params.id}/layout/complete`,
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                        storageKey: urlData.storageKey,
+                        filename: selectedFile.name,
+                        originalName: selectedFile.name,
+                        contentType,
+                        size: selectedFile.size,
+                    }),
+                }
+            );
+
+            const completeData = await completeResponse.json();
+
+            if (!completeResponse.ok) {
+                throw new Error(
+                    completeData.error ||
+                    "Не удалось сохранить информацию о макете"
+                );
+            }
+
+            // Обновляем заказ на странице.
             setOrder((current) =>
                 current
-                    ? { ...current, layout: data.layout }
+                    ? {
+                        ...current,
+                        layout: completeData.layout,
+                    }
                     : current
             );
 
             setSelectedFile(null);
-            setSuccess("Макет успешно загружен");
+
+            // Сбрасываем input выбора файла.
+            const fileInput = document.getElementById(
+                "order-layout-input"
+            ) as HTMLInputElement | null;
+
+            if (fileInput) {
+                fileInput.value = "";
+            }
+
+            setSuccess(
+                "Макет успешно загружен в Cloudflare R2"
+            );
         } catch (err) {
             setError(
                 err instanceof Error
@@ -261,8 +374,11 @@ export default function EditOrderPage() {
         }
     }
 
+    // Удаление макета
     async function deleteLayout() {
-        if (deletingLayout || !order?.layout) return;
+        if (deletingLayout || uploadingLayout || !order?.layout) {
+            return;
+        }
 
         const confirmed = window.confirm(
             "Удалить прикреплённый макет заказа?"
@@ -277,22 +393,38 @@ export default function EditOrderPage() {
         try {
             const response = await fetch(
                 `/api/orders/${params.id}/layout`,
-                { method: "DELETE" }
+                {
+                    method: "DELETE",
+                }
             );
 
             const data = await response.json();
 
             if (!response.ok) {
-                throw new Error(data.error || "Не удалось удалить макет");
+                throw new Error(
+                    data.error || "Не удалось удалить макет"
+                );
             }
 
             setOrder((current) =>
                 current
-                    ? { ...current, layout: undefined }
+                    ? {
+                        ...current,
+                        layout: undefined,
+                    }
                     : current
             );
 
             setSelectedFile(null);
+
+            const fileInput = document.getElementById(
+                "order-layout-input"
+            ) as HTMLInputElement | null;
+
+            if (fileInput) {
+                fileInput.value = "";
+            }
+
             setSuccess("Макет удалён");
         } catch (err) {
             setError(
@@ -305,8 +437,12 @@ export default function EditOrderPage() {
         }
     }
 
+    // Форматирование размера файла
     function formatFileSize(bytes: number) {
-        if (bytes < 1024) return `${bytes} Б`;
+        if (bytes < 1024) {
+            return `${bytes} Б`;
+        }
+
         if (bytes < 1024 * 1024) {
             return `${(bytes / 1024).toFixed(1)} КБ`;
         }
@@ -314,6 +450,7 @@ export default function EditOrderPage() {
         return `${(bytes / (1024 * 1024)).toFixed(2)} МБ`;
     }
 
+    // Загрузка
     if (loading) {
         return (
             <div className="flex min-h-[60vh] items-center justify-center gap-2 text-sm text-gray-500">
@@ -323,6 +460,7 @@ export default function EditOrderPage() {
         );
     }
 
+    // Заказ не найден
     if (!order) {
         return (
             <div className="space-y-4">
@@ -402,7 +540,10 @@ export default function EditOrderPage() {
                             ) : (
                                 <Save size={17} />
                             )}
-                            {saving ? "Сохранение..." : "Сохранить"}
+
+                            {saving
+                                ? "Сохранение..."
+                                : "Сохранить"}
                         </button>
                     </div>
                 </div>
@@ -412,6 +553,7 @@ export default function EditOrderPage() {
             {error && (
                 <div className="flex items-start justify-between gap-3 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
                     {error}
+
                     <button
                         onClick={() => setError("")}
                         className="text-red-500 hover:text-red-700"
@@ -439,6 +581,7 @@ export default function EditOrderPage() {
                         <label className={LABEL_CLASS}>
                             Имя / Компания
                         </label>
+
                         <input
                             className={INPUT_CLASS}
                             value={order.contact?.name ?? ""}
@@ -452,7 +595,10 @@ export default function EditOrderPage() {
                     </div>
 
                     <div>
-                        <label className={LABEL_CLASS}>Телефон</label>
+                        <label className={LABEL_CLASS}>
+                            Телефон
+                        </label>
+
                         <input
                             className={INPUT_CLASS}
                             value={order.contact?.phone ?? ""}
@@ -466,7 +612,10 @@ export default function EditOrderPage() {
                     </div>
 
                     <div className="md:col-span-2">
-                        <label className={LABEL_CLASS}>Email</label>
+                        <label className={LABEL_CLASS}>
+                            Email
+                        </label>
+
                         <input
                             type="email"
                             className={INPUT_CLASS}
@@ -494,6 +643,7 @@ export default function EditOrderPage() {
                         <label className={LABEL_CLASS}>
                             Способ доставки
                         </label>
+
                         <input
                             className={INPUT_CLASS}
                             value={order.delivery?.method ?? ""}
@@ -510,6 +660,7 @@ export default function EditOrderPage() {
                         <label className={LABEL_CLASS}>
                             Адрес доставки
                         </label>
+
                         <input
                             className={INPUT_CLASS}
                             value={order.delivery?.address ?? ""}
@@ -540,7 +691,8 @@ export default function EditOrderPage() {
 
                             <div className="min-w-0">
                                 <p className="truncate text-sm font-medium text-gray-900">
-                                    {order.layout.originalName || order.layout.filename}
+                                    {order.layout.originalName ||
+                                        order.layout.filename}
                                 </p>
 
                                 <p className="mt-1 text-xs text-gray-400">
@@ -569,17 +721,24 @@ export default function EditOrderPage() {
                                 className="flex items-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm text-red-600 transition hover:bg-red-50 disabled:opacity-50"
                             >
                                 {deletingLayout ? (
-                                    <Loader2 size={15} className="animate-spin" />
+                                    <Loader2
+                                        size={15}
+                                        className="animate-spin"
+                                    />
                                 ) : (
                                     <Trash2 size={15} />
                                 )}
+
                                 Удалить
                             </button>
                         </div>
                     </div>
                 ) : (
                     <div className="mb-5 rounded-lg border border-dashed border-gray-300 bg-gray-50 px-4 py-8 text-center">
-                        <FileText size={30} className="mx-auto text-gray-300" />
+                        <FileText
+                            size={30}
+                            className="mx-auto text-gray-300"
+                        />
 
                         <p className="mt-2 text-sm font-medium text-gray-700">
                             Макет ещё не прикреплён
@@ -593,16 +752,25 @@ export default function EditOrderPage() {
 
                 <div className="space-y-3">
                     <div>
-                        <label className={LABEL_CLASS}>
-                            {order.layout ? "Заменить макет" : "Загрузить макет"}
+                        <label
+                            htmlFor="order-layout-input"
+                            className={LABEL_CLASS}
+                        >
+                            {order.layout
+                                ? "Заменить макет"
+                                : "Загрузить макет"}
                         </label>
 
                         <input
+                            id="order-layout-input"
                             type="file"
+                            disabled={uploadingLayout || deletingLayout}
                             onChange={(e) =>
-                                setSelectedFile(e.target.files?.[0] ?? null)
+                                setSelectedFile(
+                                    e.target.files?.[0] ?? null
+                                )
                             }
-                            className="block w-full cursor-pointer rounded-lg border border-gray-200 bg-white text-sm text-gray-600 file:mr-4 file:cursor-pointer file:border-0 file:bg-gray-100 file:px-4 file:py-2.5 file:text-sm file:font-medium file:text-gray-700 hover:file:bg-gray-200"
+                            className="block w-full cursor-pointer rounded-lg border border-gray-200 bg-white text-sm text-gray-600 file:mr-4 file:cursor-pointer file:border-0 file:bg-gray-100 file:px-4 file:py-2.5 file:text-sm file:font-medium file:text-gray-700 hover:file:bg-gray-200 disabled:opacity-50"
                         />
                     </div>
 
@@ -620,7 +788,15 @@ export default function EditOrderPage() {
 
                             <button
                                 type="button"
-                                onClick={() => setSelectedFile(null)}
+                                onClick={() => {
+                                    setSelectedFile(null);
+
+                                    const input = document.getElementById(
+                                        "order-layout-input"
+                                    ) as HTMLInputElement | null;
+
+                                    if (input) input.value = "";
+                                }}
                                 className="flex items-center gap-1 self-start text-xs text-gray-500 hover:text-red-600 sm:self-center"
                             >
                                 <X size={14} />
@@ -632,11 +808,18 @@ export default function EditOrderPage() {
                     <button
                         type="button"
                         onClick={uploadLayout}
-                        disabled={!selectedFile || uploadingLayout || deletingLayout}
+                        disabled={
+                            !selectedFile ||
+                            uploadingLayout ||
+                            deletingLayout
+                        }
                         className="flex w-full items-center justify-center gap-2 rounded-lg bg-yellow-500 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-yellow-600 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
                     >
                         {uploadingLayout ? (
-                            <Loader2 size={17} className="animate-spin" />
+                            <Loader2
+                                size={17}
+                                className="animate-spin"
+                            />
                         ) : (
                             <Upload size={17} />
                         )}
@@ -658,7 +841,11 @@ export default function EditOrderPage() {
             <section className={CARD_CLASS}>
                 <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 pb-3">
                     <div className="flex items-center gap-2">
-                        <Package size={18} className="text-gray-400" />
+                        <Package
+                            size={18}
+                            className="text-gray-400"
+                        />
+
                         <h2 className="font-semibold text-gray-900">
                             Состав заказа
                         </h2>
@@ -680,15 +867,19 @@ export default function EditOrderPage() {
                                 <th className="py-3 pr-3 font-medium">
                                     Товар
                                 </th>
+
                                 <th className="w-28 px-2 text-center font-medium">
                                     Количество
                                 </th>
+
                                 <th className="w-36 px-2 text-right font-medium">
                                     Цена
                                 </th>
+
                                 <th className="w-36 px-2 text-right font-medium">
                                     Сумма
                                 </th>
+
                                 <th className="w-12"></th>
                             </tr>
                         </thead>
@@ -782,6 +973,7 @@ export default function EditOrderPage() {
                         <p className="text-sm text-gray-400">
                             Итоговая сумма
                         </p>
+
                         <p className="mt-1 text-2xl font-bold text-gray-900">
                             {total.toFixed(2)} ₴
                         </p>
@@ -792,7 +984,11 @@ export default function EditOrderPage() {
             {/* Payment and status */}
             <section className={CARD_CLASS}>
                 <div className={`mb-5 ${SECTION_TITLE_CLASS}`}>
-                    <CreditCard size={18} className="text-gray-400" />
+                    <CreditCard
+                        size={18}
+                        className="text-gray-400"
+                    />
+
                     Оплата и статус
                 </div>
 
@@ -801,11 +997,15 @@ export default function EditOrderPage() {
                         <label className={LABEL_CLASS}>
                             Способ оплаты
                         </label>
+
                         <input
                             className={INPUT_CLASS}
                             value={order.paymentMethod ?? ""}
                             onChange={(e) =>
-                                updateOrder("paymentMethod", e.target.value)
+                                updateOrder(
+                                    "paymentMethod",
+                                    e.target.value
+                                )
                             }
                         />
                     </div>
@@ -814,6 +1014,7 @@ export default function EditOrderPage() {
                         <label className={LABEL_CLASS}>
                             Статус заказа
                         </label>
+
                         <select
                             className={INPUT_CLASS}
                             value={order.status}
@@ -840,7 +1041,7 @@ export default function EditOrderPage() {
                                     "bg-gray-100 text-gray-700"
                                     }`}
                             >
-                                {STATUS_LABELS[order.status] ?? order.status}
+                                {STATUS_LABELS[status] ?? status}
                             </span>
                         </div>
                     </div>
@@ -849,11 +1050,15 @@ export default function EditOrderPage() {
                         <label className={LABEL_CLASS}>
                             Язык заказа
                         </label>
+
                         <select
                             className={INPUT_CLASS}
                             value={order.language ?? "uk"}
                             onChange={(e) =>
-                                updateOrder("language", e.target.value)
+                                updateOrder(
+                                    "language",
+                                    e.target.value
+                                )
                             }
                         >
                             <option value="uk">Украинский</option>
@@ -867,7 +1072,11 @@ export default function EditOrderPage() {
             {/* Comment */}
             <section className={CARD_CLASS}>
                 <div className={`mb-4 ${SECTION_TITLE_CLASS}`}>
-                    <MessageSquare size={18} className="text-gray-400" />
+                    <MessageSquare
+                        size={18}
+                        className="text-gray-400"
+                    />
+
                     Комментарий
                 </div>
 
@@ -900,11 +1109,17 @@ export default function EditOrderPage() {
                     className="flex items-center justify-center gap-2 rounded-lg bg-yellow-500 px-6 py-2.5 text-sm font-medium text-white transition hover:bg-yellow-600 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                     {saving ? (
-                        <Loader2 size={17} className="animate-spin" />
+                        <Loader2
+                            size={17}
+                            className="animate-spin"
+                        />
                     ) : (
                         <Save size={17} />
                     )}
-                    {saving ? "Сохранение..." : "Сохранить изменения"}
+
+                    {saving
+                        ? "Сохранение..."
+                        : "Сохранить изменения"}
                 </button>
             </div>
         </div>

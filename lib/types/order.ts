@@ -1,20 +1,10 @@
+
 export type OrderStatus =
     | "new"
     | "processing"
     | "shipped"
     | "completed"
     | "cancelled";
-
-export interface OrderContact {
-    name: string;
-    phone: string;
-    email: string;
-}
-
-export interface OrderDelivery {
-    method: string;
-    address: string;
-}
 
 export interface OrderCartItem {
     name: string;
@@ -27,28 +17,39 @@ export interface OrderLayout {
     originalName?: string;
     mimeType?: string;
     size?: number;
+
+    // Cloudflare R2
+    storageKey?: string;
+    storageProvider?: "r2" | "local";
+
+    // Старые локальные файлы
     pathOnDisk?: string;
     path?: string;
 }
 
 export interface Order {
     _id: string;
-    contact: OrderContact;
-    delivery: OrderDelivery;
+
+    contact: {
+        name: string;
+        phone: string;
+        email: string;
+    };
+
+    delivery: {
+        method: string;
+        address: string;
+    };
+
     cart: OrderCartItem[];
+
     paymentMethod: string;
     total: number;
     status: OrderStatus;
     language: string;
     comment?: string;
     layout?: OrderLayout;
-    createdAt: string;
-}
 
-export interface OrdersResponse {
-    orders: Order[];
-    total: number;
-    page: number;
-    limit: number;
-    hasMore: boolean;
+    createdAt?: string;
+    updatedAt?: string;
 }

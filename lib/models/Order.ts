@@ -1,3 +1,4 @@
+
 import mongoose, { Schema } from "mongoose";
 
 const orderSchema = new Schema(
@@ -58,6 +59,17 @@ const orderSchema = new Schema(
             originalName: String,
             mimeType: String,
             size: Number,
+
+            // Cloudflare R2
+            storageKey: String,
+            storageProvider: {
+                type: String,
+                enum: ["r2", "local"],
+                default: "local",
+            },
+
+            // Старые поля оставляем для совместимости
+            // с уже существующими заказами.
             pathOnDisk: String,
             path: String,
         },
